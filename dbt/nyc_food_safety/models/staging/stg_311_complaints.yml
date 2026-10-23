@@ -1,0 +1,83 @@
+version: 2
+
+models:
+  - name: stg_311_complaints
+    description: >
+      One cleaned food-related 311 service request.
+      Identifiers are strings, dates and coordinates are typed,
+      and blank text becomes null. Missing geography is retained.
+      Valid five-digit ZIP codes and ZIP+4 values are normalized
+      to five digits. Unrecognized boroughs become null.
+      Complaints represent reported concerns, not confirmed findings.
+
+    columns:
+      - name: complaint_id
+        description: Unique service request ID from unique_key.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: complaint_created_at
+        description: Local creation datetime, without timezone conversion.
+
+      - name: complaint_created_date
+        description: Calendar date the complaint was created.
+        data_tests:
+          - not_null
+
+      - name: complaint_closed_at
+        description: Local closure datetime; null when unavailable.
+
+      - name: complaint_closed_date
+        description: Closure date; null when unavailable.
+
+      - name: agency
+        description: Responding agency abbreviation.
+
+      - name: complaint_type
+        description: Food-related complaint category.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "Food Establishment"
+                  - "Food Poisoning"
+
+      - name: complaint_detail
+        description: Detailed complaint category from descriptor.
+
+      - name: location_type
+        description: Source classification of the incident location.
+
+      - name: borough
+        description: Recognized NYC borough in uppercase; otherwise null.
+
+      - name: zip_code
+        description: Normalized five-digit ZIP; null if missing or invalid.
+
+      - name: incident_address
+        description: Reported incident address.
+
+      - name: street_name
+        description: Reported street name.
+
+      - name: city
+        description: Source city or locality label.
+
+      - name: status
+        description: Service request status in uppercase.
+
+      - name: resolution_description
+        description: Agency resolution text, when available.
+
+      - name: latitude
+        description: Latitude converted to FLOAT64.
+
+      - name: longitude
+        description: Longitude converted to FLOAT64.
+
+      - name: source_extracted_at
+        description: Ingestion timestamp; not the complaint occurrence time.
+        data_tests:
+          - not_null

@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: fct_311_complaints
+    description: >
+      One food-related 311 service request, with all fields
+      inherited from stg_311_complaints plus month_start and
+      is_food_poisoning. Supports monthly ZIP reporting and
+      rolling complaint counts. Missing geography is retained.
+      This table does not attribute complaints to restaurants.
+      Food Poisoning is a subset of total food-related complaints,
+      so the two counts must not be added together.
+
+    columns:
+      - name: complaint_id
+        description: Unique service request identifier.
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('stg_311_complaints')
+                field: complaint_id
+
+      - name: complaint_created_date
+        description: Complaint creation date used for reporting.
+        data_tests:
+          - not_null
+
+      - name: month_start
+        description: First calendar day of the creation month.
+        data_tests:
+          - not_null
+
+      - name: is_food_poisoning
+        description: True when complaint_type is Food Poisoning.
+        data_tests:
+          - not_null
+
+      - name: zip_code
+        description: Five-digit ZIP; null records cannot enter ZIP-level marts.
+
+      - name: borough
+        description: Recognized borough in uppercase, when available.
+
+      - name: source_extracted_at
+        description: Timestamp this record was last extracted by ingestion.

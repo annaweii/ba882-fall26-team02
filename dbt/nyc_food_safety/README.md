@@ -138,7 +138,11 @@ in each developer's own dataset.
 - Hamza's BigQuery connection passed.
 - Project parsing passed.
 - setup_check view was created in dbt_dev_hamza.
-- Business models and marts are not implemented yet.
+- All six staging/core models are implemented.
+- All 39 data tests passed across the complaint and inspection builds.
+- fct_311_complaints uses incremental MERGE on complaint_id.
+- The incremental MERGE passed its tests without duplicating records.
+- Reporting marts are pending.
 - dbt is not yet connected to the deployed Airflow DAG.
 
 setup_check is a development verification model.
