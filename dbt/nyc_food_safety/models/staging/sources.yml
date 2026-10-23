@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: nyc_raw
+    database: sambisha-ba882-fall26
+    schema: nyc_restaurants
+    description: >
+      Raw NYC restaurant inspections and food-related
+      311 complaints maintained by Airflow.
+
+    tables:
+      - name: raw_inspections
+        description: >
+          Inspection citation records. Multiple rows can
+          belong to one inspection.
+        columns:
+          - name: row_key
+            description: Citation key generated during ingestion.
+          - name: extracted_at
+            description: Timestamp when the record was extracted.
+
+      - name: raw_311_complaints
+        description: >
+          Food-related service requests. Complaints represent
+          reported concerns, not confirmed inspection findings.
+        columns:
+          - name: unique_key
+            description: Unique service request identifier.
+          - name: extracted_at
+            description: Timestamp when the record was extracted.

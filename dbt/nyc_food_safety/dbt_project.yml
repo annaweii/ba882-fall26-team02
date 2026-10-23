@@ -1,0 +1,30 @@
+name: nyc_food_safety
+version: "1.0.0"
+config-version: 2
+
+profile: nyc_food_safety
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+docs-paths: ["docs"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  nyc_food_safety:
+    +materialized: view
+
+    example:
+      +enabled: false
+
+    core:
+      +materialized: table
+
+    marts:
+      +materialized: table
