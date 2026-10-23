@@ -1,0 +1,247 @@
+version: 2
+
+models:
+  - name: stg_inspections
+    description: >
+      One cleaned source citation record. Uninspected restaurant
+      records are retained with a null inspection_date and
+      is_inspected false. This is not an inspection-level table.
+
+    columns:
+      - name: row_key
+        description: Citation key generated during ingestion.
+        data_tests: [not_null, unique]
+
+      - name: camis
+        description: Restaurant permit identifier stored as a string.
+        data_tests: [not_null]
+
+      - name: restaurant_name
+        description: Public business name from DBA.
+
+      - name: cuisine_description
+        description: Source cuisine classification.
+
+      - name: borough
+        description: Recognized NYC borough in uppercase.
+
+      - name: zip_code
+        description: Five-digit ZIP or null when missing or invalid.
+
+      - name: building
+        description: Building number stored as text.
+
+      - name: street
+        description: Restaurant street name.
+
+      - name: latitude
+        description: Source latitude converted to FLOAT64.
+
+      - name: longitude
+        description: Source longitude converted to FLOAT64.
+
+      - name: inspection_date
+        description: Inspection date with the 1900-01-01 placeholder removed.
+
+      - name: is_inspected
+        description: Whether the source has a parsed non-placeholder inspection date.
+        data_tests: [not_null]
+
+      - name: inspection_type
+        description: Source inspection program and visit type.
+        data_tests:
+          - not_null:
+              config:
+                where: "is_inspected"
+
+      - name: action
+        description: Source action or disposition text.
+
+      - name: violation_code
+        description: Violation code in uppercase or null if absent.
+
+      - name: violation_description
+        description: Source explanation of the violation.
+
+      - name: critical_flag
+        description: Source critical classification in uppercase.
+
+      - name: is_critical
+        description: True for CRITICAL, false for NOT CRITICAL, otherwise null.
+
+      - name: inspection_score
+        description: Inspection-level score repeated across citation rows.
+
+      - name: grade
+        description: Source grade or grading status in uppercase.
+
+      - name: grade_date
+        description: Source date associated with the grade.
+
+      - name: record_date
+        description: Source record date, distinct from inspection date.
+
+      - name: source_extracted_at
+        description: Timestamp the ingestion pipeline last extracted this record.
+        data_tests: [not_null]
+
+  - name: dim_restaurants
+    description: >
+      One restaurant permit per CAMIS using the latest observed
+      source attributes. Includes uninspected restaurants.
+      This is not a historical address dimension or a guarantee
+      of current operating status.
+
+    columns:
+      - name: camis
+        description: Unique restaurant permit identifier.
+        data_tests: [not_null, unique]
+
+      - name: restaurant_name
+        description: Latest observed public business name.
+
+      - name: cuisine_description
+        description: Latest observed cuisine classification.
+
+      - name: borough
+        description: Latest observed recognized borough.
+
+      - name: zip_code
+        description: Latest observed normalized ZIP.
+
+      - name: building
+        description: Latest observed building number.
+
+      - name: street
+        description: Latest observed street name.
+
+      - name: latitude
+        description: Latest observed latitude.
+
+      - name: longitude
+        description: Latest observed longitude.
+
+      - name: record_date
+        description: Source record date of the selected restaurant record.
+
+      - name: source_extracted_at
+        description: Extraction timestamp of the selected record.
+
+  - name: fct_inspections
+    description: >
+      One reconstructed inspection event per CAMIS, inspection
+      date, and inspection type. Placeholder inspections are
+      excluded. Scores and grades are counted once per event.
+      Geographic attributes use the latest observed restaurant
+      location rather than a verified historical address.
+
+    columns:
+      - name: inspection_id
+        description: SHA256 hash of the structured inspection grouping fields.
+        data_tests: [not_null, unique]
+
+      - name: camis
+        description: Restaurant permit identifier.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_restaurants')
+                field: camis
+
+      - name: inspection_date
+        description: Actual inspection date.
+        data_tests: [not_null]
+
+      - name: month_start
+        description: First calendar day of the inspection month.
+        data_tests: [not_null]
+
+      - name: inspection_type
+        description: Source inspection program and visit type.
+        data_tests: [not_null]
+
+      - name: borough
+        description: Latest observed restaurant borough.
+
+      - name: zip_code
+        description: Latest observed restaurant ZIP.
+
+      - name: inspection_score
+        description: Single score for the reconstructed inspection.
+
+      - name: grade
+        description: Source grade or grading status, including pending statuses.
+
+      - name: grade_date
+        description: Latest non-null grade date within the inspection group.
+
+      - name: violation_count
+        description: Number of coded citations associated with the inspection.
+        data_tests: [not_null]
+
+      - name: critical_violation_count
+        description: Number of coded citations classified as critical.
+        data_tests: [not_null]
+
+      - name: unknown_critical_status_count
+        description: Number of coded citations without a usable critical classification.
+        data_tests: [not_null]
+
+      - name: has_critical_violation
+        description: >
+          True when any coded citation is critical. Null when
+          classification is unknown and none is confirmed
+          critical. Otherwise false. Exclude null outcomes
+          from known-outcome rate denominators.
+
+      - name: source_extracted_at
+        description: Latest extraction timestamp among the inspection records.
+
+  - name: fct_violations
+    description: >
+      One coded citation linked to an actual inspection.
+      Uninspected records and rows without a violation code
+      are excluded. Multiple citations can belong to one
+      inspection and must not be counted as separate inspections.
+
+    columns:
+      - name: violation_id
+        description: Source ingestion row_key for the citation.
+        data_tests: [not_null, unique]
+
+      - name: inspection_id
+        description: Reconstructed inspection associated with the citation.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fct_inspections')
+                field: inspection_id
+
+      - name: camis
+        description: Restaurant permit identifier.
+        data_tests: [not_null]
+
+      - name: inspection_date
+        description: Date of the associated inspection.
+        data_tests: [not_null]
+
+      - name: inspection_type
+        description: Source inspection program and visit type.
+
+      - name: violation_code
+        description: Source violation code in uppercase.
+        data_tests: [not_null]
+
+      - name: violation_description
+        description: Source explanation of the citation.
+
+      - name: critical_flag
+        description: Source critical classification in uppercase.
+
+      - name: is_critical
+        description: True for critical, false for non-critical, otherwise null.
+
+      - name: source_extracted_at
+        description: Extraction timestamp of the source citation.
