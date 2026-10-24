@@ -5,7 +5,7 @@ Repo location: dags/nyc_food_safety_daily.py
 Runs every day at ~7am Eastern:
     1. inspections     -> nyc_restaurants.raw_inspections      (full pull, merge)
     2. complaints_311  -> nyc_restaurants.raw_311_complaints   (last 30 days, merge)
-    3. dbt build                                              (add when dbt is ready)
+    3. dbt build       -> nyc_analytics                        (models and tests)
 
 Tasks run one after another (not in parallel) to stay within the worker's 2 GB memory.
 No catchup needed: inspections is a full pull; 311 back-fills itself on its first run.
@@ -35,7 +35,12 @@ def nyc_food_safety_daily():
         from include.extract.nyc_311 import run_311
         return run_311()
 
-    inspections() >> complaints_311()
+    @task
+    def dbt_build():
+        from include.dbt_runner import run_dbt_build
+        return run_dbt_build()
+
+    inspections() >> complaints_311() >> dbt_build()
 
 
 nyc_food_safety_daily()
