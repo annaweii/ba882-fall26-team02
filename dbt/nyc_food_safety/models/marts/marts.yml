@@ -1,0 +1,74 @@
+
+version: 2
+
+models:
+  - name: mart_zip_monthly
+    description: >
+      Monthly NYC restaurant inspection and food-related
+      311 complaint metrics by ZIP code, including months
+      without recorded activity.
+
+    columns:
+      - name: zip_code
+        description: NYC ZIP code.
+        data_tests:
+          - not_null
+
+      - name: month_start
+        description: First day of the reporting month.
+        data_tests:
+          - not_null
+
+      - name: inspection_count
+        description: Number of inspections in the ZIP/month.
+        data_tests:
+          - not_null
+
+      - name: food_complaint_count
+        description: Number of food-related 311 complaints.
+        data_tests:
+          - not_null
+
+      - name: is_complete_month
+        description: Whether the calendar month has ended.
+        data_tests:
+          - not_null
+
+      - name: built_at
+        description: Timestamp when the mart was built.
+        data_tests:
+          - not_null
+
+      
+  - name: mart_restaurant_risk
+    description: >
+      Current-state restaurant inspection indicators,
+      including recent inspection history and ZIP-level
+      food complaint context. Not a prediction model.
+
+    columns:
+      - name: camis
+        description: Unique restaurant identifier.
+        data_tests:
+          - not_null
+          - unique
+
+      - name: as_of_date
+        description: Reporting cutoff date.
+        data_tests:
+          - not_null
+
+      - name: inspection_count_12m
+        description: Inspections during the previous 12 months.
+        data_tests:
+          - not_null
+
+      - name: critical_violation_count_12m
+        description: Critical violations during the previous 12 months.
+        data_tests:
+          - not_null
+
+      - name: built_at
+        description: Time when this snapshot was built.
+        data_tests:
+          - not_null
