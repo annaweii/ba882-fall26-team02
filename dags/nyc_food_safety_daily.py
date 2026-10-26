@@ -35,7 +35,7 @@ def nyc_food_safety_daily():
         from include.extract.nyc_311 import run_311
         return run_311()
 
-    @task
+    @task(queue="dbt")
     def dbt_build():
         from include.dbt_runner import run_dbt_build
         return run_dbt_build()
