@@ -173,11 +173,20 @@ def _bq_client():
 def load_inspections(df: pd.DataFrame) -> dict:
     from google.cloud import bigquery
 
-    # Keep all new archival/deletion code isolated during development.
-    if _clean_env("BQ_DATASET") != "dbt_integration_test_shanmati":
-        raise ValueError(
-            "Archival development code is restricted to the test dataset"
-        )
+    dataset = _clean_env("BQ_DATASET")
+    allowed_datasets = {
+        "dbt_integration_test_shanmati",
+        "nyc_restaurants",
+    }
+
+    if dataset not in allowed_datasets:
+        raise ValueError(f"Unexpected inspection dataset: {dataset}")
+
+    if dataset == "nyc_restaurants":
+        if os.getenv("INSPECTIONS_BACKUP_VERIFIED") != "true":
+            raise ValueError(
+                "Production ingestion blocked: backup not verified"
+            )
 
     if not df.attrs.get("snapshot_validated"):
         raise ValueError(
@@ -201,7 +210,8 @@ def load_inspections(df: pd.DataFrame) -> dict:
         f"{_clean_env('BQ_DATASET')}"
     )
     target = f"{ds}.{TABLE}"
-    temp = f"{ds}._tmp_{TABLE}"
+    import uuid
+    temp = f"{ds}._tmp_{TABLE}_{uuid.uuid4().hex[:12]}"
     history = f"{ds}.{TABLE}_history"
 
     columns = list(df.columns)
