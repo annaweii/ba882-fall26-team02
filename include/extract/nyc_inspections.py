@@ -41,35 +41,95 @@ KEY_COLS = ["camis", "inspection_date", "inspection_type", "violation_code"]
 # ---------------------------------------------------------------------------
 # 1. EXTRACT
 # ---------------------------------------------------------------------------
+def _api_count(headers):
+    """Count source rows independently of pagination."""
+    response = requests.get(
+        URL,
+        params={"$select": "count(*)"},
+        headers=headers,
+        timeout=120,
+    )
+    response.raise_for_status()
+    return int(response.json()[0]["count"])
+
+
 def extract_inspections() -> pd.DataFrame:
     headers = {}
     if os.getenv("SOCRATA_APP_TOKEN"):
         headers["X-App-Token"] = os.environ["SOCRATA_APP_TOKEN"]
 
+    expected_before = _api_count(headers)
     pages, offset = [], 0
-    while True:
-        params = {"$limit": PAGE_SIZE, "$offset": offset, "$order": ":id"}  # stable order = no gaps
-        for attempt in range(1, 4):
-            resp = requests.get(URL, params=params, headers=headers, timeout=120)
-            if resp.status_code in (429, 500, 502, 503, 504):
-                time.sleep(10 * attempt)
-                continue
-            resp.raise_for_status()
-            break
-        else:
-            raise RuntimeError(f"NYC API failed at offset {offset}")
 
-        batch = resp.json()
+    while True:
+        params = {
+            "$limit": PAGE_SIZE,
+            "$offset": offset,
+            "$order": ":id",
+        }
+
+        for attempt in range(1, 4):
+            try:
+                resp = requests.get(
+                    URL, params=params, headers=headers, timeout=120
+                )
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    raise requests.RequestException(
+                        f"Retryable HTTP {resp.status_code}"
+                    )
+                resp.raise_for_status()
+                batch = resp.json()
+                break
+            except (requests.RequestException, ValueError):
+                if attempt == 3:
+                    raise
+                time.sleep(10 * attempt)
+
+        if not isinstance(batch, list):
+            raise ValueError("NYC API returned a non-list page")
+
         if not batch:
             break
+
         pages.append(pd.DataFrame(batch))
-        print(f"fetched {offset + len(batch):,} rows")
+        offset += len(batch)
+        print(f"Fetched {offset:,} inspection rows")
+
         if len(batch) < PAGE_SIZE:
             break
-        offset += PAGE_SIZE
 
-    df = pd.concat(pages, ignore_index=True) if pages else pd.DataFrame()
-    return clean(df)
+    downloaded = sum(len(page) for page in pages)
+    expected_after = _api_count(headers)
+
+    if min(expected_before, expected_after) < 200_000:
+        raise ValueError("NYC API snapshot count unexpectedly small")
+
+    for expected in (expected_before, expected_after):
+        difference = abs(downloaded - expected) / expected
+        if difference > 0.01:
+            raise ValueError(
+                f"Incomplete snapshot: downloaded={downloaded}, "
+                f"API count={expected}, difference={difference:.2%}"
+            )
+
+    raw = pd.concat(pages, ignore_index=True)
+    df = clean(raw)
+
+    if len(df) < 200_000 or df["row_key"].isna().any():
+        raise ValueError("Cleaned inspection snapshot failed validation")
+
+    if not df["row_key"].is_unique:
+        raise ValueError("Duplicate inspection row keys remain")
+
+    print(
+        f"Snapshot validated: downloaded={downloaded:,}, "
+        f"cleaned={len(df):,}, API count={expected_after:,}"
+    )
+    df.attrs["snapshot_validated"] = True
+    df.attrs["api_count"] = expected_after
+    df.attrs["downloaded_count"] = downloaded
+    df.attrs["validated_row_count"] = len(df)
+    return df
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -113,35 +173,176 @@ def _bq_client():
 def load_inspections(df: pd.DataFrame) -> dict:
     from google.cloud import bigquery
 
-    client = _bq_client()
-    ds = f"{_clean_env('GCP_PROJECT_ID')}.{_clean_env('BQ_DATASET')}"
-    target, temp = f"{ds}.{TABLE}", f"{ds}._tmp_{TABLE}"
+    dataset = _clean_env("BQ_DATASET")
+    allowed_datasets = {
+        "dbt_integration_test_shanmati",
+        "nyc_restaurants",
+    }
 
-    # a) load today's pull into a temp table (replaced every run)
+    if dataset not in allowed_datasets:
+        raise ValueError(f"Unexpected inspection dataset: {dataset}")
+
+    if dataset == "nyc_restaurants":
+        if os.getenv("INSPECTIONS_BACKUP_VERIFIED") != "true":
+            raise ValueError(
+                "Production ingestion blocked: backup not verified"
+            )
+
+    if not df.attrs.get("snapshot_validated"):
+        raise ValueError(
+            "Refusing deletion-enabled load: API snapshot not validated"
+        )
+
+    if len(df) != df.attrs.get("validated_row_count"):
+        raise ValueError(
+            "Snapshot row count changed after extraction validation"
+        )
+
+    if len(df) < 200_000:
+        raise ValueError("Refusing to synchronize a small snapshot")
+
+    if df["row_key"].isna().any() or not df["row_key"].is_unique:
+        raise ValueError("Invalid inspection row keys")
+
+    client = _bq_client()
+    ds = (
+        f"{_clean_env('GCP_PROJECT_ID')}."
+        f"{_clean_env('BQ_DATASET')}"
+    )
+    target = f"{ds}.{TABLE}"
+    import uuid
+    temp = f"{ds}._tmp_{TABLE}_{uuid.uuid4().hex[:12]}"
+    history = f"{ds}.{TABLE}_history"
+
+    columns = list(df.columns)
+    business_columns = [
+        col for col in columns
+        if col not in ("row_key", "extracted_at")
+    ]
+
+    def row_hash(alias):
+        fields = ", ".join(
+            f"{alias}.`{col}` AS `{col}`"
+            for col in business_columns
+        )
+        return f"FARM_FINGERPRINT(TO_JSON_STRING(STRUCT({fields})))"
+
+    changed = f"({row_hash('T')} != {row_hash('S')})"
+
+    all_cols = ", ".join(f"`{col}`" for col in columns)
+    insert_values = ", ".join(f"S.`{col}`" for col in columns)
+    update_clause = ", ".join(
+        f"T.`{col}` = S.`{col}`"
+        for col in columns if col != "row_key"
+    )
+
     client.load_table_from_dataframe(
-        df, temp, job_config=bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
+        df,
+        temp,
+        job_config=bigquery.LoadJobConfig(
+            write_disposition="WRITE_TRUNCATE"
+        ),
     ).result()
 
-    # b) first run ever: create the target with the same columns
-    client.query(f"CREATE TABLE IF NOT EXISTS `{target}` AS SELECT * FROM `{temp}` WHERE FALSE").result()
+    try:
+        # Read-only preflight. The production version will additionally
+        # require a verified production snapshot backup.
+        stats_sql = f"""
+        SELECT
+          COUNTIF(S.row_key IS NULL) AS deleted,
+          COUNTIF(S.row_key IS NOT NULL AND {changed}) AS updated
+        FROM `{target}` T
+        LEFT JOIN `{temp}` S USING (row_key)
+        """
+        counts = next(iter(client.query(stats_sql).result()))
+        deleted = int(counts.deleted)
+        updated = int(counts.updated)
 
-    # c) merge: update rows we have, insert rows we don't
-    cols = [c for c in df.columns if c != "row_key"]
-    set_clause = ", ".join(f"T.`{c}` = S.`{c}`" for c in cols)
-    all_cols = ", ".join(f"`{c}`" for c in df.columns)
-    merge = client.query(f"""
+        existing = next(iter(client.query(
+            f"SELECT COUNT(*) AS n FROM `{target}`"
+        ).result())).n
+
+        if existing < 200_000:
+            raise ValueError("Existing inspection table too small")
+
+        if deleted > existing * 0.02:
+            raise ValueError(
+                f"Deletion safety limit exceeded: "
+                f"{deleted:,} of {existing:,} rows"
+            )
+
+        inserted = next(iter(client.query(f"""
+            SELECT COUNT(*) AS n
+            FROM `{temp}` S
+            LEFT JOIN `{target}` T USING (row_key)
+            WHERE T.row_key IS NULL
+        """).result())).n
+
+        print(
+            f"Preflight: existing={existing:,}, "
+            f"inserted={inserted:,}, updated={updated:,}, "
+            f"deleted={deleted:,}"
+        )
+
+        # Both history INSERT and current-table MERGE are atomic.
+        transaction_sql = f"""
+        BEGIN
+        BEGIN TRANSACTION;
+
+        ASSERT (
+          (SELECT COUNT(*) FROM `{temp}`) >= 200000
+        ) AS 'Source snapshot unexpectedly small';
+
+        ASSERT (
+          (SELECT COUNT(*)
+           FROM `{target}` T
+           LEFT JOIN `{temp}` S USING (row_key)
+           WHERE S.row_key IS NULL)
+          <= (SELECT COUNT(*) * 0.02 FROM `{target}`)
+        ) AS 'Deletion limit exceeded';
+
+        INSERT INTO `{history}`
+        ({all_cols}, change_type, archived_at)
+        SELECT
+          {", ".join(f"T.`{col}`" for col in columns)},
+          IF(S.row_key IS NULL, 'deleted', 'updated'),
+          CURRENT_TIMESTAMP()
+        FROM `{target}` T
+        LEFT JOIN `{temp}` S USING (row_key)
+        WHERE S.row_key IS NULL
+           OR (S.row_key IS NOT NULL AND {changed});
+
         MERGE `{target}` T
         USING `{temp}` S
         ON T.row_key = S.row_key
-        WHEN MATCHED THEN UPDATE SET {set_clause}
-        WHEN NOT MATCHED THEN INSERT ({all_cols}) VALUES ({all_cols})
-    """)
-    merge.result()
-    client.delete_table(temp, not_found_ok=True)
+        WHEN MATCHED AND {changed}
+          THEN UPDATE SET {update_clause}
+        WHEN NOT MATCHED BY TARGET
+          THEN INSERT ({all_cols}) VALUES ({insert_values})
+        WHEN NOT MATCHED BY SOURCE
+          THEN DELETE;
 
-    stats = {"rows_pulled": len(df), "rows_changed": merge.num_dml_affected_rows}
-    print(stats)
-    return stats
+        COMMIT TRANSACTION;
+        EXCEPTION WHEN ERROR THEN
+          ROLLBACK TRANSACTION;
+          RAISE;
+        END;
+        """
+
+        client.query(transaction_sql).result()
+
+        stats = {
+            "rows_pulled": len(df),
+            "inserted": int(inserted),
+            "updated": updated,
+            "deleted": deleted,
+            "archived": updated + deleted,
+        }
+        print(stats)
+        return stats
+
+    finally:
+        client.delete_table(temp, not_found_ok=True)
 
 
 def run_inspections() -> dict:
