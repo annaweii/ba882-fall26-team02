@@ -1,9 +1,8 @@
-
 {{ config(materialized='table') }}
 
 with reporting_date as (
 
-    select current_date() as as_of_date
+    select {{ as_of_date() }} as as_of_date
 
 ),
 
@@ -14,110 +13,19 @@ restaurants as (
         restaurant_name,
         cuisine_description,
         borough,
-        zip_code,
-        source_extracted_at
+        zip_code
+
     from {{ ref('dim_restaurants') }}
 
 ),
 
-inspections as (
+inspection_summary as (
 
-    select
-        i.*
-    from {{ ref('fct_inspections') }} as i
-    cross join reporting_date as d
-    where i.inspection_date < d.as_of_date
+    select * from {{ ref('int_restaurants__inspection_summary') }}
 
 ),
 
-latest_inspection as (
-
-    select
-        camis,
-        inspection_date as last_inspection_date,
-        inspection_score as last_inspection_score,
-        inspection_type as last_inspection_type
-
-    from inspections
-
-    qualify row_number() over (
-        partition by camis
-        order by
-            inspection_date desc,
-            inspection_id desc
-    ) = 1
-
-),
-
-latest_grade as (
-
-    select
-        camis,
-        grade as last_graded_grade,
-        grade_date as last_graded_date
-
-    from inspections
-    cross join reporting_date as d
-
-    where grade in ('A', 'B', 'C')
-      and grade_date is not null
-      and grade_date <= d.as_of_date
-
-    qualify row_number() over (
-        partition by camis
-        order by
-            grade_date desc,
-            inspection_date desc,
-            inspection_id desc
-    ) = 1
-
-),
-
-inspection_history_12m as (
-
-    select
-        i.camis,
-
-        count(*) as inspection_count_12m,
-
-        avg(i.inspection_score)
-            as average_inspection_score_12m,
-
-        countif(i.has_critical_violation is true)
-            as inspections_with_critical_count_12m,
-
-        countif(i.has_critical_violation is not null)
-            as critical_outcome_known_count_12m,
-
-        countif(i.has_critical_violation is null)
-            as unknown_critical_outcome_count_12m,
-
-        sum(i.critical_violation_count)
-            as critical_violation_count_12m
-
-    from inspections as i
-    cross join reporting_date as d
-
-    where i.inspection_date >=
-        date_sub(d.as_of_date, interval 12 month)
-
-    group by i.camis
-
-),
-
-inspection_freshness as (
-
-    select
-        camis,
-        max(source_extracted_at)
-            as inspections_source_extracted_at
-
-    from {{ ref('fct_inspections') }}
-
-    group by camis
-
-),
-
+-- TODO: move to an int_ model once the 311 staging/fact SQL has been reviewed.
 complaints_by_zip_90d as (
 
     select
@@ -149,38 +57,38 @@ select
 
     d.as_of_date,
 
-    li.last_inspection_date,
-    li.last_inspection_score,
-    li.last_inspection_type,
+    s.last_inspection_date,
+    s.last_inspection_score,
+    s.last_inspection_type,
 
     date_diff(
         d.as_of_date,
-        li.last_inspection_date,
+        s.last_inspection_date,
         day
     ) as days_since_last_inspection,
 
-    lg.last_graded_grade,
-    lg.last_graded_date,
+    s.last_graded_grade,
+    s.last_graded_date,
 
-    coalesce(h.inspection_count_12m, 0)
+    coalesce(s.inspection_count_12m, 0)
         as inspection_count_12m,
 
-    h.average_inspection_score_12m,
+    s.average_inspection_score_12m,
 
     coalesce(
-        h.inspections_with_critical_count_12m, 0
+        s.inspections_with_critical_count_12m, 0
     ) as inspections_with_critical_count_12m,
 
     coalesce(
-        h.critical_outcome_known_count_12m, 0
+        s.critical_outcome_known_count_12m, 0
     ) as critical_outcome_known_count_12m,
 
     coalesce(
-        h.unknown_critical_outcome_count_12m, 0
+        s.unknown_critical_outcome_count_12m, 0
     ) as unknown_critical_outcome_count_12m,
 
     coalesce(
-        h.critical_violation_count_12m, 0
+        s.critical_violation_count_12m, 0
     ) as critical_violation_count_12m,
 
     case
@@ -192,24 +100,15 @@ select
 
     current_timestamp() as built_at,
 
-    f.inspections_source_extracted_at,
+    s.inspections_source_extracted_at,
     c.complaints_source_extracted_at
 
 from restaurants as r
 
 cross join reporting_date as d
 
-left join latest_inspection as li
-    on r.camis = li.camis
-
-left join latest_grade as lg
-    on r.camis = lg.camis
-
-left join inspection_history_12m as h
-    on r.camis = h.camis
-
-left join inspection_freshness as f
-    on r.camis = f.camis
+left join inspection_summary as s
+    on r.camis = s.camis
 
 left join complaints_by_zip_90d as c
     on r.zip_code = c.zip_code

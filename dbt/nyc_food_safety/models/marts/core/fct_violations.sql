@@ -12,7 +12,7 @@ select
 
 from {{ ref('stg_inspections') }} as s
 
-left join {{ ref('fct_inspections') }} as i
+left join {{ ref('int_inspections__reconstructed') }} as i
     on s.camis = i.camis
     and s.inspection_date = i.inspection_date
     and s.inspection_type is not distinct from i.inspection_type
