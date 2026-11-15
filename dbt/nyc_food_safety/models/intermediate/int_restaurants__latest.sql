@@ -1,3 +1,5 @@
+-- Grain: one row per CAMIS (latest observed source record).
+
 with ranked_records as (
 
     select

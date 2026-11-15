@@ -1,3 +1,9 @@
+-- Grain: one row per CAMIS + inspection_date + inspection_type.
+-- Collapses citation-level staging rows into inspection events, so
+-- scores and grades are counted once per event. inspection_id is defined
+-- here and only here; keep the struct field names unchanged or every
+-- hash changes.
+
 with inspection_groups as (
 
     select
@@ -43,38 +49,30 @@ select
         sha256(
             to_json_string(
                 struct(
-                    i.camis as camis,
-                    i.inspection_date as inspection_date,
-                    i.inspection_type as inspection_type
+                    camis as camis,
+                    inspection_date as inspection_date,
+                    inspection_type as inspection_type
                 )
             )
         )
     ) as inspection_id,
 
-    i.camis,
-    i.inspection_date,
-    date_trunc(i.inspection_date, month) as month_start,
-    i.inspection_type,
-
-    r.borough,
-    r.zip_code,
-
-    i.inspection_score,
-    i.grade,
-    i.grade_date,
-    i.violation_count,
-    i.critical_violation_count,
-    i.unknown_critical_status_count,
+    camis,
+    inspection_date,
+    inspection_type,
+    inspection_score,
+    grade,
+    grade_date,
+    violation_count,
+    critical_violation_count,
+    unknown_critical_status_count,
 
     case
-        when i.critical_violation_count > 0 then true
-        when i.unknown_critical_status_count > 0 then cast(null as bool)
+        when critical_violation_count > 0 then true
+        when unknown_critical_status_count > 0 then cast(null as bool)
         else false
     end as has_critical_violation,
 
-    i.source_extracted_at
+    source_extracted_at
 
-from inspection_groups as i
-
-left join {{ ref('dim_restaurants') }} as r
-    on i.camis = r.camis
+from inspection_groups

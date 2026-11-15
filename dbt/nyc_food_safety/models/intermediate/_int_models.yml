@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: int_restaurants__latest
+    description: >
+      One row per CAMIS holding the most recent source record, ranked by
+      record_date, source_extracted_at, inspection_date and row_key.
+      Feeds dim_restaurants and fct_inspections.
+    columns:
+      - name: camis
+        description: Restaurant permit identifier.
+        data_tests: [not_null, unique]
+
+  - name: int_inspections__reconstructed
+    description: >
+      One reconstructed inspection event per CAMIS, inspection date and
+      inspection type. Owns the inspection_id hash and the critical-violation
+      logic. Feeds fct_inspections, fct_violations and
+      int_restaurants__inspection_summary.
+    columns:
+      - name: inspection_id
+        description: SHA256 hash of camis, inspection_date and inspection_type.
+        data_tests: [not_null, unique]
+      - name: camis
+        description: Restaurant permit identifier.
+        data_tests: [not_null]
+      - name: inspection_date
+        description: Actual inspection date.
+        data_tests: [not_null]
+
+  - name: int_restaurants__inspection_summary
+    description: >
+      One row per CAMIS with at least one inspection: latest inspection,
+      latest A/B/C grade, trailing 12-month history and source freshness,
+      all relative to the as_of_date macro. Feeds mart_restaurant_risk.
+    columns:
+      - name: camis
+        description: Restaurant permit identifier.
+        data_tests: [not_null, unique]

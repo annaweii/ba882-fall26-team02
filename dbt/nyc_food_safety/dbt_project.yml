@@ -20,11 +20,11 @@ models:
   nyc_food_safety:
     +materialized: view
 
-    example:
-      +enabled: false
+    staging:
+      +materialized: view
 
-    core:
-      +materialized: table
+    intermediate:
+      +materialized: view
 
     marts:
       +materialized: table
