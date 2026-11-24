@@ -37,7 +37,7 @@ profile_config = ProfileConfig(
     profile_mapping=GoogleCloudServiceAccountDictProfileMapping(
         conn_id=GCP_CONN_ID,
         profile_args={
-            "project": os.environ["GCP_PROJECT_ID"].strip(),
+            "project": os.getenv("GCP_PROJECT_ID", "").strip(),
             "dataset": SCRATCH_DATASET,
             "location": "US",
             "threads": 1,
