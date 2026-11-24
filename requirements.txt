@@ -14,3 +14,4 @@ opentelemetry-sdk==1.42.1
 opentelemetry-semantic-conventions==0.63b1
 dbt-core==1.12.6
 dbt-bigquery==1.12.1
+astronomer-cosmos==1.16.0
