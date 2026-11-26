@@ -25,7 +25,7 @@ from cosmos.constants import ExecutionMode, TestBehavior
 from cosmos.profiles import GoogleCloudServiceAccountDictProfileMapping
 
 # Same project folder the production runner uses (dags/ -> repo root -> dbt/nyc_food_safety)
-DBT_PROJECT_DIR = Path(__file__).resolve().parents[1] / "dbt" / "nyc_food_safety"
+DBT_PROJECT_DIR = Path(os.getenv("AIRFLOW_HOME", "/usr/local/airflow")) / "dbt" / "nyc_food_safety"
 
 # Airflow connection holding the service-account key (create it before triggering).
 GCP_CONN_ID = os.getenv("DBT_GCP_CONN_ID", "gcp_dbt")
