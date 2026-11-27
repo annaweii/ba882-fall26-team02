@@ -53,6 +53,7 @@ nyc_food_safety_cosmos_test = DbtDag(
     render_config=RenderConfig(
         test_behavior=TestBehavior.AFTER_EACH,   # model, then its tests
         exclude=["setup_check"],                 # same as --exclude setup_check today
+        should_detach_multiple_parents_tests=True,  # run 2-table tests after both tables exist
     ),
     operator_args={"queue": "dbt"},              # keep the dbt worker routing
     schedule=None,
